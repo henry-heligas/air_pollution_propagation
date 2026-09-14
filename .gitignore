@@ -1,0 +1,30 @@
+# Python environment and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environments and API Keys
+.env
+.venv
+env/
+venv/
+ENV/
+*.env.*
+SECRET_KEY
+secrets.json
+
+# Data and large files
+*.csv
+*.log
+*.sqlite3
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

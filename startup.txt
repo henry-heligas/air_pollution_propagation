@@ -1,0 +1,18 @@
+cd ~/code/air_pollution_propagation
+
+#virtual environment
+source .venv/bin/activate
+
+#database connection (Run in uv)
+#if first time, create the container: docker run -d -p 6379:6379 --name redis_broker redis:alpine
+docker start redis_broker
+docker compose up -d
+
+#task engine (run in uv)
+celery -A worker.celery_app worker --loglevel=info
+
+#FastAPI Server
+uvicorn main:app --reload
+
+#Jupyter Notebook (Data Inspection) (in uv)
+jupyter lab
