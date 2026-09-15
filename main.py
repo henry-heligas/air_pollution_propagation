@@ -8,7 +8,6 @@ from src.tasks.prep_tasks import run_prep_vulnerability_profile  # NEW IMPORT
 from src.tasks.tier2_tasks import run_tier2_risk_model
 from src.tasks.proposed_tasks import run_proposed_site_assessment
 
-from src.io.db_connector import fetch_geojson_results
 from src.schemas.impact import ProposedFacilityRequest
 
 app = FastAPI(
@@ -43,7 +42,6 @@ async def run_tier1_baseline_endpoint(payload: Tier1BaselineRequest):
         "task_ids": task_ids
     }
 
-# NEW ENDPOINT: Pre-processing step before Tier 2
 @app.post("/api/v1/assessments/prep-vulnerability")
 async def trigger_vulnerability_prep(payload: SitePayload):
     """

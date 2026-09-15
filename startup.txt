@@ -16,3 +16,174 @@ uvicorn main:app --reload
 
 #Jupyter Notebook (Data Inspection) (in uv)
 jupyter lab
+
+#build json query library
+python -m src.builders.json_query_builder
+
+
+
+#Original proposal evaluation settings:
+
+#North rails chronic impact
+{
+
+  "site_name": "rails_north",
+
+  "sources": [
+    {
+      "source_id": "diesel_engine_repair_shop",
+      "latitude": 41.848000,
+      "longitude": -87.636500,
+
+      "emissions_tpy": {
+        "NO2": 32.5,
+        "PM2.5": 8.4,
+        "PM10": 8.7,
+        "CO": 16.3,
+        "SO2": 0.3,
+        "CH4": 2.4,
+        "HCHO": 1.8,
+        "O3": 0.0,
+        "BENZENE": 1.2
+      }
+    },
+    {
+
+      "source_id": "welding_and_fabrication_vent",
+      "latitude": 41.847500,
+      "longitude":-87.636000,
+
+      "emissions_tpy": {
+        "NO2": 4.0,
+        "PM2.5": 14.5,
+        "PM10": 14.9,
+        "CO": 2.0,
+        "SO2": 0.04,
+        "CH4": 0.2,
+        "HCHO": 0.15,
+        "O3": 0.0,
+        "BENZENE": 0.1
+      }
+    },
+    {
+
+      "source_id": "north_yard_idling_tracks",
+      "latitude":41.845000,
+      "longitude":-87.637200,
+
+      "emissions_tpy": {
+        "NO2": 45.0,
+        "PM2.5": 6.0,
+        "PM10": 6.2,
+        "CO": 22.5,
+        "SO2": 0.45,
+        "CH4": 5.0,
+        "HCHO": 3.75,
+        "O3": 0.0,
+        "BENZENE": 2.5
+      }
+    }
+  ]
+} 
+
+#south rails chronic impact
+{
+  "site_name": "rails_south_chronic",
+
+  "sources": [
+    {
+      "source_id": "car_cleaning_facility",
+      "latitude": 41.832000,
+      "longitude": -87.633500,
+      
+      "emissions_tpy": {
+        "NO2": 5.0,
+        "PM2.5": 2.2,
+        "PM10": 2.3,
+        "CO": 2.5,
+        "SO2": 0.05,
+        "CH4": 2.4,
+        "HCHO": 2.4,
+        "O3": 0.0,
+        "BENZENE": 4.8
+      }
+    },
+    {
+      "source_id": "routine_maintenance_shed",
+      "latitude": 41.831500,
+      "longitude": -87.634000,
+
+      "emissions_tpy": {
+        "NO2": 12.0,
+        "PM2.5": 3.5,
+        "PM10": 3.6,
+        "CO": 6.0,
+        "SO2": 0.12,
+        "CH4": 1.2,
+        "HCHO": 0.9,
+        "O3": 0.0,
+        "BENZENE": 0.6
+      }
+    },
+    {
+      "source_id": "south_yard_idling_tracks",
+      "latitude": 41.828000,
+      "longitude": -87.632500,
+
+      "emissions_tpy": {
+        "NO2": 28.0,
+        "PM2.5": 4.0,
+        "PM10": 4.1,
+        "CO": 14.0,
+        "SO2": 0.28,
+        "CH4": 3.0,
+        "HCHO": 2.25,
+        "O3": 0.0,
+        "BENZENE": 1.5
+      }
+    }
+  ]
+}
+
+Accident Scenario A: Diesel Locomotive welding_and_fabrication_vent
+
+{
+  "site_name": "rails_accident_diesel_fire",
+
+  "sources": [
+    {
+      "source_id": "fuel_storage_fire_epicenter",
+      "latitude": 41.846500,
+      "longitude": -87.636800,
+      
+      "emissions_tpy": {
+        "NO2": 150.0,
+        "PM2.5": 300.0,
+        "PM10": 309.3,
+        "CO": 750.0,
+        "SO2": 1.5,
+        "CH4": 75.0,
+        "HCHO": 50.0,
+        "O3": 0.0,
+        "BENZENE": 25.0
+      }
+    },
+    {
+      "source_id": "secondary_locomotive_burn",
+      "latitude": 41.846200,
+      "longitude": -87.637000,
+      
+      "emissions_tpy": {
+        "NO2": 45.0,
+        "PM2.5": 80.0,
+        "PM10": 82.5,
+        "CO": 225.0,
+        "SO2": 0.45,
+        "CH4": 15.0,
+        "HCHO": 10.0,
+        "O3": 0.0,
+        "BENZENE": 5.0
+      }
+    }
+  ]
+}

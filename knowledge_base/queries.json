@@ -1,0 +1,10 @@
+{
+  "tier3_dispersion": {
+    "description": "Calculates 1/d^2 decay for a point source.",
+    "template": "WITH stack AS (SELECT ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) AS geom) SELECT b.building_id AS sector, DEGREES(ST_Azimuth(s.geom, ST_Centroid(b.geometry))) AS azimuth_deg, 1.0 / GREATEST(POWER(ST_Distance(b.geometry::geography, s.geom::geography)/100.0, 2), 1.0) AS decay_factor FROM rails_north.vulnerability_profile_{site_name} b CROSS JOIN stack s;"
+  },
+  "tier3_wind_anchor": {
+    "description": "Fetches wind array for nearest grid point.",
+    "template": "SELECT wind_direction_timeseries FROM rails_north.climate_wind_grid_{site_name} ORDER BY ST_Distance(geometry, ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326)) LIMIT 1;"
+  }
+}

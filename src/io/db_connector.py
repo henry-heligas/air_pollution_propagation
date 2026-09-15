@@ -1,65 +1,86 @@
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import create_engine, text
+import logging
 from typing import List, Dict, Any
+import geopandas as gpd
+from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from sqlalchemy.engine import Engine
 from config import settings
+from sqlalchemy.pool import NullPool
 
-async def execute_spatial_query(sql_statement: str, params: dict = None) -> List[Dict[str, Any]]:
-    engine = create_async_engine(settings.async_database_url, echo=False)
-    async with engine.begin() as conn:
-        res = await conn.execute(text(sql_statement), params or {})
-        rows = [dict(row._mapping) for row in res.fetchall()] if res.returns_rows else []
-    await engine.dispose()
-    return rows
+logger = logging.getLogger(__name__)
 
-async def execute_statements_transactionally(statements: List[str]) -> None:
-    engine = create_async_engine(settings.async_database_url, echo=False)
-    async with engine.begin() as conn:
-        for stmt in statements:
-            await conn.execute(text(stmt))
-    await engine.dispose()
+class DatabaseManager:
+    """
+    Centralized Database Manager handling connection pooling for both
+    asynchronous query execution and synchronous spatial data persistence.
+    """
+    _instance = None
 
-async def fetch_geojson_results(site_name: str, tier: int = 1, pollutant: str = "no2") -> dict:
-    engine = create_async_engine(settings.async_database_url, echo=False)
-    pol_clean = pollutant.lower().replace(".", "")
-    
-    # Target table routing based on assessment tier
-    if tier == 1:
-        table_name = f"public.tier1_fused_{pol_clean}_{site_name}"
-    elif tier == 2:
-        table_name = f"rails_north.tier2_risk_model_{site_name}"
-    else:
-        table_name = f"rails_north.proposed_risk_model_{site_name}"
-    
-    query = text(f"""
-        SELECT json_build_object(
-            'type', 'FeatureCollection',
-            'features', COALESCE(json_agg(ST_AsGeoJSON(t.*)::json), '[]'::json)
+    def __new__(cls):
+        # Implement Singleton pattern to guarantee only one engine pair per worker
+        if cls._instance is None:
+            cls._instance = super(DatabaseManager, cls).__new__(cls)
+            cls._instance._init_engines()
+        return cls._instance
+
+    def _init_engines(self):
+        # 1. Asynchronous engine (Loop-safe for Celery via NullPool)
+        self.async_engine: AsyncEngine = create_async_engine(
+            settings.async_database_url,
+            echo=False,
+            poolclass=NullPool  # Prevents cross-task event loop collisions
         )
-        FROM (SELECT * FROM {table_name}) as t;
-    """)
-    
-    async with engine.begin() as conn:
-        try:
-            result = await conn.execute(query)
-            geojson_data = result.scalar()
-        except Exception as e:
-            geojson_data = {"type": "FeatureCollection", "features": [], "error": str(e)}
-            
-    await engine.dispose()
-    return geojson_data or {"type": "FeatureCollection", "features": []}
+        
+        # 2. Synchronous engine specifically for Pandas/GeoPandas .to_postgis()
+        sync_url = str(settings.async_database_url).replace("postgresql+asyncpg://", "postgresql://")
+        self.sync_engine: Engine = create_engine(
+            sync_url,
+            echo=False,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True  # Drops stale connections safely during Celery worker forks
+        )
 
-def create_spatial_index(schema: str, table_name: str, geom_col: str = "geometry"):
-    """Automatically generates a GiST spatial index for a newly created table."""
-    
-    sync_url = str(settings.async_database_url).replace("postgresql+asyncpg://", "postgresql://")
-    engine = create_engine(sync_url)
-    
-    index_name = f"idx_{table_name}_{geom_col}"
-    
-    sql = text(f"""
-        CREATE INDEX IF NOT EXISTS {index_name} 
-        ON {schema}.{table_name} USING GIST ({geom_col});
-    """)
-    
-    with engine.begin() as conn:
-        conn.execute(sql)
+    async def execute_spatial_query(self, sql_statement: str, params: dict = None):
+        async with self.async_engine.begin() as conn:
+            res = await conn.execute(text(sql_statement), params or {})
+            if res.returns_rows:
+                return [dict(row._mapping) for row in res.fetchall()]
+            return []
+
+    def persist_geodataframe(self, gdf: gpd.GeoDataFrame, table_name: str, schema: str = "public", index_geom: bool = True, geom_col: str = "geometry"):
+        """
+        Synchronously pushes a GeoDataFrame to PostGIS using the connection pool.
+        Automatically handles dropping old tables and creating spatial indexes.
+        """
+        with self.sync_engine.begin() as conn:
+            conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{table_name} CASCADE;"))
+            
+        gdf.to_postgis(
+            table_name, 
+            self.sync_engine, 
+            schema=schema, 
+            if_exists="replace", 
+            index=False,
+            chunksize=1000
+        )
+        
+        if index_geom:
+            self.create_spatial_index(schema, table_name, geom_col)
+
+    def create_spatial_index(self, schema: str, table_name: str, geom_col: str = "geometry"):
+        """Generates a GiST spatial index for a given table."""
+        index_name = f"idx_{table_name}_{geom_col}"
+        sql = text(f"""
+            CREATE INDEX IF NOT EXISTS {index_name} 
+            ON {schema}.{table_name} USING GIST ({geom_col});
+        """)
+        with self.sync_engine.begin() as conn:
+            conn.execute(sql)
+
+# Expose the singleton globally
+db_manager = DatabaseManager()
+
+# Legacy wrappers for backward compatibility with existing task files
+
+create_spatial_index = db_manager.create_spatial_index

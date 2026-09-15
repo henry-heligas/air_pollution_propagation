@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # EPA Regulatory Baseline Limits
     EPA_PM25_STANDARD_UG_M3: float = 9.0
     
+    # Compass Configuration
+    COMPASS_SECTORS_16: ClassVar[list] = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
+                                          'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+
     # Tier 2 Exposure Thresholds
     TIER2_INNER_BAND_M: float = 183.0
     TIER2_OUTER_RING_M: float = 305.0

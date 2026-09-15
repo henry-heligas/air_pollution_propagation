@@ -1,21 +1,26 @@
 import asyncio
 from celery_app import celery_app
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
-from config import settings
-from src.io.queries import build_prep_vulnerability_profile_sql
+
+from src.io.db_connector import db_manager
+from src.io.orchestrator import orchestrator
 
 @celery_app.task(name="run_prep_vulnerability_profile")
 def run_prep_vulnerability_profile(site_name: str):
     return asyncio.run(async_prep_vulnerability(site_name))
 
 async def async_prep_vulnerability(site_name: str):
-    engine = create_async_engine(settings.async_database_url, echo=False)
-    queries = build_prep_vulnerability_profile_sql(site_name)
+    # 1. Format the main CREATE TABLE query from the JSON knowledge base
+    create_sql = orchestrator.format_query("prep_vulnerability", {"site_name": site_name})
     
-    async with engine.begin() as conn:
-        for query in queries:
-            await conn.execute(text(query))
+    # 2. Prepare the setup and teardown commands
+    drop_sql = f"DROP TABLE IF EXISTS rails_north.vulnerability_profile_{site_name} CASCADE;"
+    index_sql = f"CREATE INDEX IF NOT EXISTS idx_vuln_profile_{site_name}_geom ON rails_north.vulnerability_profile_{site_name} USING GIST (geometry);"
+    
+    # 3. Execute transactionally via the DatabaseManager pool
+    async with db_manager.async_engine.begin() as conn:
+        await conn.execute(text(drop_sql))
+        await conn.execute(text(create_sql))
+        await conn.execute(text(index_sql))
             
-    await engine.dispose()
     return {"status": "success", "operation": "Vulnerability_Profile_Prep", "site": site_name}

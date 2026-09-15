@@ -35,44 +35,57 @@ def calculate_toxicological_risk(df_buildings: pd.DataFrame, df_baseline: pd.Dat
     
     return df
 
-def calculate_proposed_facility_impact(
-    df_decay: pd.DataFrame, 
-    df_wind: pd.DataFrame, 
-    df_baseline: pd.DataFrame, 
-    emissions_tpy: dict[str, float]
-) -> pd.DataFrame:
+def calculate_proposed_facility_impact(df_merged: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates final toxicological impacts for a proposed facility.
+    Preserves baseline metrics and generates explicit delta columns 
+    to evaluate the localized increase in community risk.
+    """
     tox = settings.TOXICOLOGICAL_STANDARDS
     
-    df_merged = pd.merge(df_decay, df_wind, on="sector", how="left").fillna({"wind_frequency_pct": 1.0})
-    df_merged = pd.merge(df_merged, df_baseline, on="sector", how="left")
-    
+    # 1. Fill missing baseline LUR loads
     df_merged["nox_load_1km"] = df_merged.get("nox_load_1km", 0.0).fillna(0.0)
     df_merged["pm25_load_1km"] = df_merged.get("pm25_load_1km", 0.0).fillna(0.0)
     
     lur_nox_scaling = 0.005 * 0.75 
     lur_pm25_scaling = 0.005
-
-    no2_tpy = emissions_tpy.get("NO2", 0.0)
-    pm25_tpy = emissions_tpy.get("PM2.5", 0.0)
-    benzene_tpy = emissions_tpy.get("BENZENE", 0.0)
     
-    # Proposed facility increment from Tier 3 dispersion wedge
-    df_merged["c_no2_prop"] = (no2_tpy * 0.5) * (df_merged["wind_frequency_pct"] / 100) * df_merged["decay_factor"]
-    df_merged["c_pm25_prop"] = (pm25_tpy * 0.5) * (df_merged["wind_frequency_pct"] / 100) * df_merged["decay_factor"]
-    df_merged["c_benzene_prop"] = (benzene_tpy * 0.5) * (df_merged["wind_frequency_pct"] / 100) * df_merged["decay_factor"]
+    # 2. Extract the accumulated proposed plume variables
+    c_no2_prop = df_merged.get("c_no2_prop_total", 0.0)
+    c_pm25_prop = df_merged.get("c_pm25_prop_total", 0.0)
+    c_benzene_prop = df_merged.get("c_benzene_prop_total", 0.0)
     
-    # Combined Status Quo (Satellite + Existing Industrial LUR) + Proposed Facility Plume
-    total_no2 = (df_merged["no2_estimate"] * df_merged["decay_factor"]) + (df_merged["nox_load_1km"] * lur_nox_scaling) + df_merged["c_no2_prop"]
-    total_pm25 = (df_merged["pm25_estimate"] * df_merged["decay_factor"]) + (df_merged["pm25_load_1km"] * lur_pm25_scaling) + df_merged["c_pm25_prop"]
-    total_so2 = df_merged["so2_estimate"] * df_merged["decay_factor"]
+    # 3. Preserve Baseline State
+    df_merged["baseline_hazard_index"] = df_merged["hazard_index"]
+    df_merged["baseline_cancer_risk"] = df_merged["cancer_risk_per_million"]
     
-    df_merged["hazard_index"] = (
-        (total_no2 / tox["NO2"]["rfc"]) +
-        (total_pm25 / tox["PM2.5"]["rfc"]) +
-        (total_so2 / tox["SO2"]["rfc"])
+    # 4. Calculate Combined State (Status Quo + Cumulative Proposed Facility Plume)
+    total_no2 = df_merged["no2_estimate"] + (df_merged["nox_load_1km"] * lur_nox_scaling) + c_no2_prop
+    total_pm25 = df_merged["pm25_estimate"] + (df_merged["pm25_load_1km"] * lur_pm25_scaling) + c_pm25_prop
+    total_so2 = df_merged["so2_estimate"]
+    
+    # 5. Calculate Proposed Hazard Quotients
+    df_merged["proposed_hq_no2"] = total_no2 / tox["NO2"]["rfc"]
+    df_merged["proposed_hq_pm25"] = total_pm25 / tox["PM2.5"]["rfc"]
+    df_merged["proposed_hq_so2"] = total_so2 / tox["SO2"]["rfc"]
+    
+    # 6. Calculate Proposed Cumulative Metrics
+    df_merged["proposed_hazard_index"] = (
+        df_merged["proposed_hq_no2"] + 
+        df_merged["proposed_hq_pm25"] + 
+        df_merged["proposed_hq_so2"]
     )
+    df_merged["proposed_pop_weighted_hi"] = df_merged["proposed_hazard_index"] * df_merged["total_population"]
     
-    total_benzene = (df_merged["hcho_estimate"] * df_merged["decay_factor"] * 1.25) + df_merged["c_benzene_prop"]
-    df_merged["cancer_risk_per_million"] = (total_benzene * tox["BENZENE"]["iur"]) * 1_000_000
+    total_benzene = (df_merged["hcho_estimate"] * 1.25) + c_benzene_prop
+    df_merged["proposed_cancer_risk"] = (total_benzene * tox["BENZENE"]["iur"]) * 1_000_000
+    
+    # 7. Calculate Deltas (The absolute localized impact of the facility)
+    df_merged["delta_hazard_index"] = df_merged["proposed_hazard_index"] - df_merged["baseline_hazard_index"]
+    df_merged["delta_cancer_risk"] = df_merged["proposed_cancer_risk"] - df_merged["baseline_cancer_risk"]
+    
+    # Clean up intermediate plume totals for a cleaner GeoJSON output
+    cols_to_drop = ["c_no2_prop_total", "c_pm25_prop_total", "c_benzene_prop_total", "c_no2_prop", "c_pm25_prop", "c_benzene_prop"]
+    df_merged.drop(columns=[c for c in cols_to_drop if c in df_merged.columns], inplace=True)
     
     return df_merged

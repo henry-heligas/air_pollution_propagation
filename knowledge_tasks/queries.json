@@ -1,0 +1,252 @@
+{
+    "tier1_pixel": {
+        "description": "Extracts raw satellite timeseries and joins to planetary boundary layer.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Schema for fetching timeseries pixel arrays.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                },
+                "timeseries_col": {
+                    "pattern": "^[a-z0-9_]+_timeseries$",
+                    "title": "Timeseries Col",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name",
+                "timeseries_col"
+            ],
+            "title": "Tier1PixelSchema",
+            "type": "object"
+        },
+        "template": "SELECT\nROW_NUMBER() OVER () AS id,\nST_X(ST_Centroid(s.geometry)) AS longitude,\nST_Y(ST_Centroid(s.geometry)) AS latitude,\nST_AsText(s.geometry) AS wkt_geometry,\ns.{timeseries_col} AS raw_timeseries,\nCOALESCE(c.pbl_height_m, 1000.0) AS pblh_meters,\n298.15 AS temperature_k,\n101325.0 AS pressure_pa\nFROM {site_name}.air_quality_satellite_chicago_macro s\nLEFT JOIN public.planetary_boundary_layer_chicago_macro c\nON ST_Intersects(ST_Centroid(s.geometry), c.geometry);"
+    },
+    "tier1_fused_insert": {
+        "description": "Constructs the final geometry table for compliant Tier 1 grids.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Schema for Tier 1 satellite baseline mapping.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                },
+                "pollutant_clean": {
+                    "description": "E.g., pm25, no2",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Pollutant Clean",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name",
+                "pollutant_clean"
+            ],
+            "title": "Tier1FusedSchema",
+            "type": "object"
+        },
+        "template": "CREATE TABLE public.tier1_fused_{pollutant_clean}_{site_name} AS\nSELECT id,\nST_SetSRID(ST_GeomFromText(wkt_geometry), 4326) AS geometry,\nestimate AS {pollutant_clean}_estimate,\nmargin_of_error_95, lower_bound, upper_bound,\npollutant, physical_unit, averaging_window, naaqs_limit, naaqs_exceedance\nFROM (\nSELECT * FROM jsonb_populate_recordset(NULL::record, CAST(:json_data AS jsonb))\nAS (id int, wkt_geometry text, estimate float, margin_of_error_95 float,\nlower_bound float, upper_bound float, pollutant text, physical_unit text,\naveraging_window text, naaqs_limit float, naaqs_exceedance boolean)\n) as data;"
+    },
+    "prep_vulnerability": {
+        "description": "Prepares the residential and non-residential data for impact analysis in tier 2.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Base schema ensuring site names are SQL-safe.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name"
+            ],
+            "title": "SiteSchema",
+            "type": "object"
+        },
+        "template": "CREATE TABLE rails_north.vulnerability_profile_{site_name} AS\nWITH hospital_buildings AS (\nSELECT DISTINCT ON (b.id)\n'hospital_3d_' || b.id AS building_id,\nST_SetSRID(b.geometry, 4326) AS geometry,\nGREATEST(200, ((ST_Area(b.geometry::geography) * COALESCE(b.num_floors, GREATEST(1, ROUND(b.height / 3.5)), 1)) / 30)::int) AS population,\n'hospital'::text AS exposure_category,\n'acute_sensitive'::text AS exposure_type\nFROM rails_north.overture_buildings_3d_{site_name} b\nJOIN rails_north.overture_places_{site_name} p ON ST_Intersects(b.geometry, p.geometry)\nWHERE p.primary_category = 'hospital'\n),\nschool_buildings AS (\nSELECT DISTINCT ON (b.id)\n'school_' || b.id AS building_id,\nST_SetSRID(b.geometry, 4326) AS geometry,\nCOALESCE(GREATEST(150, ((ST_Area(b.geometry::geography) * COALESCE(b.num_floors, GREATEST(1, ROUND(b.height / 3.5)), 1)) / 25)::int), 300) AS population,\na.amenity AS exposure_category,\n'acute_sensitive'::text AS exposure_type\nFROM rails_north.amenities_{site_name} a\nJOIN rails_north.overture_buildings_3d_{site_name} b ON ST_DWithin(a.geometry::geography, b.geometry::geography, 20)\nWHERE a.amenity IN ('school', 'kindergarten', 'social_facility')\nAND NOT EXISTS (\nSELECT 1 FROM hospital_buildings h WHERE ST_Intersects(b.geometry, h.geometry)\n)\n),\nresidential_buildings AS (\nSELECT\nr.building_id::text,\nST_SetSRID(r.geometry, 4326) AS geometry,\nr.est_population AS population,\n'residential'::text AS exposure_category,\n'chronic_24h'::text AS exposure_type\nFROM rails_north.buildings_demographic_profile_{site_name} r\nWHERE NOT EXISTS (\nSELECT 1 FROM hospital_buildings h WHERE ST_Intersects(r.geometry, h.geometry)\n)\nAND NOT EXISTS (\nSELECT 1 FROM school_buildings s WHERE ST_Intersects(r.geometry, s.geometry)\n)\n),\nopen_spaces AS (\nSELECT DISTINCT ON (l.id)\n'open_space_' || l.id AS building_id,\nST_SetSRID(l.geometry, 4326) AS geometry,\nGREATEST(50, (ST_Area(l.geometry::geography) / 100)::int) AS population,\nl.leisure AS exposure_category,\n'transient_daytime'::text AS exposure_type\nFROM rails_north.landuse_{site_name} l\nWHERE l.leisure IN ('park', 'playground', 'pitch', 'stadium')\n)\nSELECT * FROM hospital_buildings\nUNION ALL\nSELECT * FROM school_buildings\nUNION ALL\nSELECT * FROM residential_buildings\nUNION ALL\nSELECT * FROM open_spaces;"
+    },
+    "tier2_exposure": {
+        "description": "Extracts ambient baseline data from vulnerability profiles.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Base schema ensuring site names are SQL-safe.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name"
+            ],
+            "title": "SiteSchema",
+            "type": "object"
+        },
+        "template": "SELECT\nb.building_id,\nb.building_id AS sector,\nCOALESCE(b.population, 0) AS total_population,\nCOALESCE(b.exposure_category, 'residential') AS exposure_category,\nCOALESCE(b.exposure_type, 'chronic_24h') AS exposure_type,\n1.0 AS decay_factor,\nST_AsText(b.geometry) AS wkt_geometry\nFROM rails_north.vulnerability_profile_{site_name} b;"
+    },
+    "tier2_empirical_lur": {
+        "description": "Calculates localized land use regression from major industrial sources.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Base schema ensuring site names are SQL-safe.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name"
+            ],
+            "title": "SiteSchema",
+            "type": "object"
+        },
+        "template": "WITH building_buffers AS (\nSELECT b.building_id, b.geometry\nFROM rails_north.vulnerability_profile_{site_name} b\n),\nindustrial_load AS (\nSELECT\nbb.building_id,\nCOALESCE(SUM((p.nox_g_per_sec * 31.536) / GREATEST(POWER(ST_Distance(bb.geometry::geography, p.geometry::geography) / 100.0, 2), 1.0)), 0) AS nox_load_1km,\nCOALESCE(SUM((p.pm25_g_per_sec * 31.536) / GREATEST(POWER(ST_Distance(bb.geometry::geography, p.geometry::geography) / 100.0, 2), 1.0)), 0) AS pm25_load_1km,\nCOALESCE(MIN(ST_Distance(bb.geometry::geography, p.geometry::geography)), 5000) AS dist_to_nearest_source_m\nFROM building_buffers bb\nLEFT JOIN rails_north.epa_point_sources_{site_name} p\nON ST_DWithin(bb.geometry::geography, p.geometry::geography, 3000)\nGROUP BY bb.building_id\n)\nSELECT\nb.building_id,\ni.nox_load_1km,\ni.pm25_load_1km,\ni.dist_to_nearest_source_m\nFROM building_buffers b\nJOIN industrial_load i ON b.building_id = i.building_id;"
+    },
+    "tier2_knn_idw": {
+        "description": "Executes Spatial Inverse Distance Weighting across 9 nearest satellite grid cells.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Base schema ensuring site names are SQL-safe.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "site_name"
+            ],
+            "title": "SiteSchema",
+            "type": "object"
+        },
+        "template": "WITH bldgs AS (\nSELECT building_id, ST_Centroid(geometry) AS geom\nFROM rails_north.vulnerability_profile_{site_name}\n)\nSELECT\nb.building_id AS sector,\nn.no2_estimate::float, n.pm25_estimate::float,\nn.so2_estimate::float, n.hcho_estimate::float\nFROM bldgs b\nCROSS JOIN LATERAL (\nWITH knn AS (\nSELECT\nn_grid.no2_estimate, p_grid.pm25_estimate,\ns_grid.so2_estimate, h_grid.hcho_estimate,\n1.0 / GREATEST(POWER(ST_Distance(n_grid.geometry::geography, b.geom::geography), 2), 1.0) AS weight\nFROM public.tier1_fused_no2_{site_name} n_grid\nJOIN public.tier1_fused_pm25_{site_name} p_grid ON n_grid.id = p_grid.id\nJOIN public.tier1_fused_so2_{site_name} s_grid ON n_grid.id = s_grid.id\nJOIN public.tier1_fused_hcho_{site_name} h_grid ON n_grid.id = h_grid.id\nWHERE n_grid.geometry && ST_Expand(b.geom, 0.05)\nORDER BY n_grid.geometry <-> b.geom\nLIMIT 9\n)\nSELECT\nSUM(no2_estimate * weight) / SUM(weight) AS no2_estimate,\nSUM(pm25_estimate * weight) / SUM(weight) AS pm25_estimate,\nSUM(so2_estimate * weight) / SUM(weight) AS so2_estimate,\nSUM(hcho_estimate * weight) / SUM(weight) AS hcho_estimate\nFROM knn\n) n;"
+    },
+    "build_point_exposure_wedges": {
+        "description": "Creates standard 12-direction wedges for visualizing impacts.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Schema for individual smokestacks and Tier 3 coordinate anchors.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                },
+                "lat": {
+                    "description": "Anchor Latitude",
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "title": "Lat",
+                    "type": "number"
+                },
+                "lon": {
+                    "description": "Anchor Longitude",
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "title": "Lon",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "site_name",
+                "lat",
+                "lon"
+            ],
+            "title": "PointSourceSchema",
+            "type": "object"
+        },
+        "template": "CREATE TABLE {target_table} AS\nWITH sites AS (\nSELECT (ST_Dump(ST_GeomFromText(:multipoint_wkt, 4326))).geom AS center\n),\nsectors AS (\nSELECT\nidx, sector,\nRADIANS((idx * {sector_step} - {half_step} + 360)::numeric % 360) AS a_start,\nRADIANS((idx * {sector_step})::numeric % 360) AS a_mid,\nRADIANS((idx * {sector_step} + {half_step})::numeric % 360) AS a_end\nFROM (VALUES {values_tuples}) AS t(idx, sector)\n),\nwedge_geoms AS (\nSELECT\ns.sector,\nST_SetSRID(ST_MakePolygon(ST_MakeLine(ARRAY[\nsites.center,\nST_Project(sites.center::geography, CAST(:outer_m AS DOUBLE PRECISION), s.a_start)::geometry,\nST_Project(sites.center::geography, CAST(:outer_m AS DOUBLE PRECISION), s.a_mid)::geometry,\nST_Project(sites.center::geography, CAST(:outer_m AS DOUBLE PRECISION), s.a_end)::geometry,\nsites.center\n])), 4326) AS geometry_outer,\nST_SetSRID(ST_MakePolygon(ST_MakeLine(ARRAY[\nsites.center,\nST_Project(sites.center::geography, CAST(:inner_m AS DOUBLE PRECISION), s.a_start)::geometry,\nST_Project(sites.center::geography, CAST(:inner_m AS DOUBLE PRECISION), s.a_mid)::geometry,\nST_Project(sites.center::geography, CAST(:inner_m AS DOUBLE PRECISION), s.a_end)::geometry,\nsites.center\n])), 4326) AS geometry_inner\nFROM sectors s CROSS JOIN sites\n),\nmerged_wedges AS (\nSELECT\nsector,\nST_Union(geometry_outer) AS geometry_outer,\nST_Union(geometry_inner) AS geometry_inner\nFROM wedge_geoms\nGROUP BY sector\n)\nSELECT\nw.sector,\nCOUNT(DISTINCT CASE WHEN ST_Intersects(b.geometry, w.geometry_inner) THEN b.geometry END)::int AS homes_in_band183,\nCOUNT(DISTINCT CASE WHEN ST_Intersects(b.geometry, w.geometry_outer) THEN b.geometry END)::int AS homes_in_ring305,\nROUND(COALESCE(SUM(CASE WHEN ST_Intersects(b.geometry, w.geometry_inner) THEN b.population END), 0)::numeric, 1)::float AS pop_in_band183,\nROUND(COALESCE(SUM(CASE WHEN ST_Intersects(b.geometry, w.geometry_outer) THEN b.population END), 0)::numeric, 1)::float AS pop_in_ring305,\nw.geometry_outer AS geometry\nFROM merged_wedges w\nLEFT JOIN {bldg_table} b ON ST_Intersects(b.geometry, w.geometry_outer)\nGROUP BY w.sector, w.geometry_outer;"
+    },
+    "tier3_dispersion": {
+        "description": "Calculates ST_Distance and 1/d^2 decay for a localized point source.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Schema for individual smokestacks and Tier 3 coordinate anchors.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                },
+                "lat": {
+                    "description": "Anchor Latitude",
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "title": "Lat",
+                    "type": "number"
+                },
+                "lon": {
+                    "description": "Anchor Longitude",
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "title": "Lon",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "site_name",
+                "lat",
+                "lon"
+            ],
+            "title": "PointSourceSchema",
+            "type": "object"
+        },
+        "template": "WITH stack AS (SELECT ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) AS geom)\nSELECT\nb.building_id AS sector,\nDEGREES(ST_Azimuth(s.geom, ST_Centroid(b.geometry))) AS azimuth_deg,\n1.0 / GREATEST(POWER(ST_Distance(b.geometry::geography, s.geom::geography)/100.0, 2), 1.0) AS decay_factor\nFROM rails_north.vulnerability_profile_{site_name} b CROSS JOIN stack s;"
+    },
+    "tier3_wind_anchor": {
+        "description": "Fetches the localized 16-point wind array nearest to the primary stack.",
+        "schema": {
+            "additionalProperties": false,
+            "description": "Schema for individual smokestacks and Tier 3 coordinate anchors.",
+            "properties": {
+                "site_name": {
+                    "description": "Sanitized site identifier",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Site Name",
+                    "type": "string"
+                },
+                "lat": {
+                    "description": "Anchor Latitude",
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "title": "Lat",
+                    "type": "number"
+                },
+                "lon": {
+                    "description": "Anchor Longitude",
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "title": "Lon",
+                    "type": "number"
+                }
+            },
+            "required": [
+                "site_name",
+                "lat",
+                "lon"
+            ],
+            "title": "PointSourceSchema",
+            "type": "object"
+        },
+        "template": "SELECT wind_direction_timeseries\nFROM rails_north.climate_wind_grid_{site_name}\nORDER BY ST_Distance(geometry, ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))\nLIMIT 1;"
+    }
+}

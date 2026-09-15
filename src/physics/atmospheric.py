@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import scipy.stats as st
 from config import settings
-from src.io.queries import COMPASS_SECTORS_16
 
 def convert_column_to_surface(
     column_umol_m2: float, 
@@ -32,7 +31,7 @@ def parse_wind_frequencies(wind_raw_json: str) -> pd.DataFrame:
     """
     # Default zeroed DataFrame for all 16 sectors
     full_compass = pd.DataFrame({
-        "sector": COMPASS_SECTORS_16,
+        "sector": settings.COMPASS_SECTORS_16, 
         "wind_frequency_pct": 0.0
     })
     
@@ -47,7 +46,7 @@ def parse_wind_frequencies(wind_raw_json: str) -> pd.DataFrame:
         counts = pd.Series(sector_idx).value_counts(normalize=True) * 100
         
         parsed_df = pd.DataFrame({
-            "sector": [COMPASS_SECTORS_16[i] for i in counts.index],
+            "sector": [settings.COMPASS_SECTORS_16[i] for i in counts.index],
             "wind_frequency_pct": counts.values.round(2)
         })
         

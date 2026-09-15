@@ -1,118 +1,157 @@
-# src/tasks/proposed_tasks.py
-
 import asyncio
+import math
+import numpy as np
 import pandas as pd
 import geopandas as gpd
-from celery_app import celery_app
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
+from shapely.geometry import Point, Polygon
 
+from celery_app import celery_app
 from config import settings
-from src.physics.atmospheric import parse_wind_frequencies
 from src.physics.toxicity import calculate_proposed_facility_impact
-from src.io.db_connector import execute_spatial_query
-from src.io.queries import build_drop_table_sql, build_point_exposure_wedges_sql
+from src.physics.atmospheric import parse_wind_frequencies
+from src.io.db_connector import db_manager
+from src.io.orchestrator import orchestrator
 
 @celery_app.task(name="run_proposed_site_assessment")
-def run_proposed_site_assessment(payload_dict: dict):
-    return asyncio.run(async_proposed_site_execution(payload_dict))
+def run_proposed_site_assessment(payload: dict):
+    return asyncio.run(async_proposed_site_execution(payload))
 
 async def async_proposed_site_execution(payload: dict):
     site_name = payload["site_name"]
     sources = payload.get("sources", [])
-    emissions_tpy = payload.get("emissions_tpy", {"NO2": 10.0, "PM2.5": 2.5, "BENZENE": 0.5})
-    inner_m, outer_m = payload.get("tier2_inner_m", 183.0), payload.get("tier2_outer_m", 1500.0)
     
-    # 1. Geometry & Table Targets
-    centroid_lat = sum(pt['latitude'] for pt in sources) / len(sources)
-    centroid_lon = sum(pt['longitude'] for pt in sources) / len(sources)
-    centroid_wkt = f"POINT({centroid_lon} {centroid_lat})"
-    multipoint_wkt = f"MULTIPOINT({', '.join([f'{pt['longitude']} {pt['latitude']}' for pt in sources])})"
+    if not sources:
+        return {"status": "failed", "reason": "No emission sources provided."}
+
+    # 1. Fetch wind using Orchestrator and Database Manager
+    anchor_lat = sources[0]["latitude"]
+    anchor_lon = sources[0]["longitude"]
     
-    target_table = f"public.tier2_exposure_wedges_{site_name}"
-    bldg_table = f"rails_north.vulnerability_profile_{site_name}"
-    wind_table = f"rails_north.climate_wind_grid_{site_name}"
+    wind_sql = orchestrator.format_query("tier3_wind_anchor", {
+        "site_name": site_name,
+        "lat": anchor_lat,
+        "lon": anchor_lon
+    })
+    wind_records = await db_manager.execute_spatial_query(wind_sql)
+    wind_raw_json = wind_records[0]["wind_direction_timeseries"] if wind_records else "[]"
+    df_wind = parse_wind_frequencies(wind_raw_json)
     
-    # 2. Build Spatial Wind Wedges
-    engine = create_async_engine(settings.async_database_url, echo=False)
-    async with engine.begin() as conn:
-        await conn.execute(text(build_drop_table_sql(target_table)))
-        await conn.execute(text(build_point_exposure_wedges_sql(target_table, bldg_table)), 
-                           {"multipoint_wkt": multipoint_wkt, "inner_m": inner_m, "outer_m": outer_m})
+    # 2. Fetch Baseline
+    baseline_sql = f"SELECT * FROM rails_north.tier2_risk_model_{site_name};"
+    df_master = pd.DataFrame(await db_manager.execute_spatial_query(baseline_sql))
+    df_master['sector'] = df_master['sector'].astype(str)
+    
+    if "decay_factor" in df_master.columns:
+        df_master.drop(columns=["decay_factor"], inplace=True)
+    
+    # Initialize running totals ONCE before loop
+    df_master["c_no2_prop_total"] = 0.0
+    df_master["c_pm25_prop_total"] = 0.0
+    df_master["c_benzene_prop_total"] = 0.0
+
+    # 3. Loop through every stack and accumulate overlapping plumes
+    for source in sources:
+        lat = source["latitude"]
+        lon = source["longitude"]
+        emissions = source.get("emissions_tpy", {"NO2": 0.0, "PM2.5": 0.0, "BENZENE": 0.0})
         
-        res_wind = await conn.execute(
-            text(f"SELECT wind_direction_timeseries FROM {wind_table} ORDER BY geometry <-> ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) LIMIT 1;"),
-            {"lat": centroid_lat, "lon": centroid_lon}
+        # Pydantic-validated SQL injection via Orchestrator
+        dispersion_sql = orchestrator.format_query("tier3_dispersion", {
+            "site_name": site_name,
+            "lat": lat,
+            "lon": lon
+        })
+        
+        df_decay = pd.DataFrame(await db_manager.execute_spatial_query(dispersion_sql))
+        df_decay['sector'] = df_decay['sector'].astype(str)
+        
+        # Key Alignment: Convert raw UUIDs to match df_master's prefixed keys
+        if not df_decay['sector'].isin(df_master['sector']).all():
+            uuid_map = {s.split('_')[-1]: s for s in df_master['sector']}
+            df_decay['sector'] = df_decay['sector'].map(uuid_map).fillna(df_decay['sector'])
+            
+        sector_idx = np.floor(((df_decay['azimuth_deg'].values + 11.25) % 360) / 22.5).astype(int)
+        df_decay['compass_sector'] = [settings.COMPASS_SECTORS_16[i] for i in sector_idx]
+        
+        df_stack = pd.merge(df_decay, df_wind, left_on="compass_sector", right_on="sector", how="left")
+        df_stack["wind_frequency_pct"] = df_stack["wind_frequency_pct"].fillna(1.0)
+        
+        # Merge temporary stack factors
+        df_master = pd.merge(
+            df_master, 
+            df_stack[["sector_x", "decay_factor", "wind_frequency_pct"]], 
+            left_on="sector", 
+            right_on="sector_x", 
+            how="left"
         )
-        wind_row = res_wind.fetchone()
         
-    df_wind = parse_wind_frequencies(wind_row[0] if wind_row else None)
+        df_master["decay_factor"] = df_master["decay_factor"].fillna(0.0)
+        df_master["wind_frequency_pct"] = df_master["wind_frequency_pct"].fillna(0.0)
+        
+        # Accumulate math for this stack
+        df_master["c_no2_prop_total"] += (emissions.get("NO2", 0) * 0.5) * (df_master["wind_frequency_pct"] / 100) * df_master["decay_factor"]
+        df_master["c_pm25_prop_total"] += (emissions.get("PM2.5", 0) * 0.5) * (df_master["wind_frequency_pct"] / 100) * df_master["decay_factor"]
+        df_master["c_benzene_prop_total"] += (emissions.get("BENZENE", 0) * 0.5) * (df_master["wind_frequency_pct"] / 100) * df_master["decay_factor"]
+        
+        # Drop temporary merged columns
+        df_master.drop(columns=["sector_x", "decay_factor", "wind_frequency_pct"], inplace=True)
+        
+    # 4. FINAL EXPORT MAPPING (OUTSIDE LOOP)
+    df_master["c_no2_prop"] = df_master["c_no2_prop_total"].fillna(0.0)
+    df_master["c_pm25_prop"] = df_master["c_pm25_prop_total"].fillna(0.0)
+    df_master["c_benzene_prop"] = df_master["c_benzene_prop_total"].fillna(0.0)
+    df_master["building_id"] = df_master["sector"]
+        
+    # 5. Finalize Toxicology
+    df_impact = calculate_proposed_facility_impact(df_master)
     
-    # 3. Extract Exposure Demographics
-    decay_sql = f"""
-    SELECT 
-        b.building_id,
-        w.sector,
-        COALESCE(b.population, 0) AS total_population,
-        COALESCE(b.exposure_category, 'residential') AS exposure_category,
-        COALESCE(b.exposure_type, 'chronic_24h') AS exposure_type,
-        ST_Distance(b.geometry::geography, ST_GeomFromText('{centroid_wkt}', 4326)::geography) AS distance_m,
-        EXP(-ST_Distance(b.geometry::geography, ST_GeomFromText('{centroid_wkt}', 4326)::geography) / 500.0) AS decay_factor,
-        ST_AsText(b.geometry) AS wkt_geometry
-    FROM {bldg_table} b
-    JOIN {target_table} w ON ST_Intersects(b.geometry, w.geometry)
-    """
-    df_decay = pd.DataFrame(await execute_spatial_query(decay_sql))
-    
-    # Guardrail: Handle empty intersections cleanly
-    if df_decay.empty:
-        await engine.dispose()
-        return {
-            "status": "failed",
-            "reason": "Zero buildings or receptors found within the specified dispersion radius.",
-            "site_name": site_name
-        }
-    
-    # 4. Extract Environmental Baseline
-    baseline_sql = f"""
-    SELECT 
-        w.sector,
-        (SELECT no2_estimate FROM public.tier1_fused_no2_{site_name} p ORDER BY p.geometry <-> w.geometry LIMIT 1) AS no2_estimate,
-        (SELECT pm25_estimate FROM public.tier1_fused_pm25_{site_name} p ORDER BY p.geometry <-> w.geometry LIMIT 1) AS pm25_estimate,
-        (SELECT so2_estimate FROM public.tier1_fused_so2_{site_name} p ORDER BY p.geometry <-> w.geometry LIMIT 1) AS so2_estimate,
-        (SELECT hcho_estimate FROM public.tier1_fused_hcho_{site_name} p ORDER BY p.geometry <-> w.geometry LIMIT 1) AS hcho_estimate
-    FROM {target_table} w;
-    """
-    df_baseline = pd.DataFrame(await execute_spatial_query(baseline_sql))
-    
-    # 5. Call Physics Helper Module
-    df_risk = calculate_proposed_facility_impact(df_decay, df_wind, df_baseline, emissions_tpy)
-    
-    # 6. Persist Output Layer
-    sync_url = str(settings.async_database_url).replace("postgresql+asyncpg://", "postgresql://")
-    sync_engine = create_engine(sync_url)
-    
-    table_name = f"proposed_risk_model_{site_name}"
-    
-    gdf_risk = gpd.GeoDataFrame(df_risk, geometry=gpd.GeoSeries.from_wkt(df_risk['wkt_geometry']), crs="EPSG:4326")
-    gdf_risk.to_postgis(
-        table_name, 
-        sync_engine, 
-        schema="rails_north", 
-        if_exists="replace", 
-        index=False,
-        chunksize=1000
+    # 6. Persist Tier 3 Plume Results to PostGIS (Using new DatabaseManager method)
+    gdf_impact = gpd.GeoDataFrame(
+        df_impact, 
+        geometry=gpd.GeoSeries.from_wkt(df_impact['wkt_geometry']), 
+        crs="EPSG:4326"
     )
     
-    # 7. Apply Spatial Index immediately after creation
-    with sync_engine.begin() as conn:
-        conn.execute(text(f"CREATE INDEX ON rails_north.{table_name} USING GIST (geometry);"))
+    table_name = f"tier3_proposed_impact_{site_name}"
+    db_manager.persist_geodataframe(gdf_impact, table_name, schema="rails_north")
     
-    await engine.dispose()
-    return {
-        "status": "success",
-        "operation": "Proposed_Facility_Assessment",
-        "site_name": site_name,
-        "buildings_processed": len(gdf_risk)
-    }
+    # ---------------------------------------------------------
+    # Generate and Persist Wind Rose Geometric Layer for QGIS
+    # ---------------------------------------------------------
+    radius_m = 2500
+    
+    # Project the anchor stack to EPSG:3857 (meters) for accurate math
+    stack_pt = gpd.GeoSeries(
+        [Point(anchor_lon, anchor_lat)], crs="EPSG:4326"
+    ).to_crs(epsg=3857).iloc[0]
+    
+    wedges = []
+    for i, sector_label in enumerate(settings.COMPASS_SECTORS_16):
+        bearing_center = i * 22.5
+        bearing_start = bearing_center - 11.25
+        bearing_end = bearing_center + 11.25
+
+        points = [stack_pt]
+        # Draw the curved outer edge of the wedge
+        for b in np.linspace(bearing_start, bearing_end, 10):
+            math_angle = math.radians(90 - b)
+            x = stack_pt.x + radius_m * math.cos(math_angle)
+            y = stack_pt.y + radius_m * math.sin(math_angle)
+            points.append(Point(x, y))
+        points.append(stack_pt)
+        wedges.append(Polygon([[p.x, p.y] for p in points]))
+
+    # Create the GeoDataFrame and project back to Lat/Lon
+    gdf_wedges = gpd.GeoDataFrame({'sector': settings.COMPASS_SECTORS_16}, geometry=wedges, crs="EPSG:3857")
+    gdf_wedges = gdf_wedges.to_crs(epsg=4326)
+    
+    # Attach the wind frequencies so they can be mapped as a heat gradient in QGIS
+    gdf_wedges = gdf_wedges.merge(
+        df_wind, on='sector', how='left'
+    ).fillna({'wind_frequency_pct': 0.0})
+    
+    # Push the wind rose layer to PostgreSQL using DatabaseManager
+    wind_table_name = f"tier3_wind_rose_{site_name}"
+    db_manager.persist_geodataframe(gdf_wedges, wind_table_name, schema="rails_north")
+
+    return {"status": "success", "site": site_name, "table": table_name}
