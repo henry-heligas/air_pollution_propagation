@@ -6,14 +6,21 @@ from pydantic import BaseModel, Field
 from src.tasks.tier1_tasks import run_tier1_baseline
 from src.tasks.prep_tasks import run_prep_vulnerability_profile  # NEW IMPORT
 from src.tasks.tier2_tasks import run_tier2_risk_model
-from src.tasks.proposed_tasks import run_proposed_site_assessment
+from src.tasks.proposed_tasks import run_proposed_site_assessment, trigger_tier3_scenario
 
 from src.schemas.impact import ProposedFacilityRequest
+from celery_app import celery_app
 
 app = FastAPI(
     title="Urban Morphology Pollution API",
     description="Multi-tier atmospheric chemistry and physical dispersion engine."
 )
+
+class PointSource(BaseModel):
+    source_id: str
+    latitude: float
+    longitude: float
+    emissions_tpy: dict[str, float]
 
 class Tier1BaselineRequest(BaseModel):
     site_name: str = Field(..., example="rails_north")
@@ -24,6 +31,11 @@ class Tier1BaselineRequest(BaseModel):
 
 class Tier2RiskRequest(BaseModel):
     site_name: str = Field(..., example="rails_north")
+
+class Tier3ScenarioPayload(BaseModel):
+    site_name: str
+    schema_name: str = "rails_north"
+    sources: List[PointSource]
 
 class SitePayload(BaseModel):
     site_name: str = Field(..., example="rails_north")
@@ -84,4 +96,40 @@ async def evaluate_proposed_site(payload: ProposedFacilityRequest):
         "task_id": task.id,
         "site_name": payload.site_name,
         "sources_evaluated": len(payload.sources)
+    }
+
+@app.post("/api/v1/assessments/{site_name}/analysis-handoff")
+async def trigger_analysis_handoff(site_name: str):
+    """
+    Manually triggers the final data packaging, chart generation, 
+    and LLM context creation for downstream reporting.
+    """
+    task = celery_app.send_task("run_analysis_handoff", args=[site_name])
+    return {
+        "status": "Analysis handoff initiated",
+        "task_id": task.id,
+        "site_name": site_name
+    }
+
+@app.post("/api/v1/simulate/tier3-scenario")
+async def simulate_tier3_scenario(request: Tier3ScenarioPayload):
+    """
+    Ingests a multi-source emission JSON, validates it, 
+    and queues the spatial decay simulation in Celery.
+    """
+    # 1. Convert the validated Pydantic object back into a dictionary for Celery
+    payload_dict = request.model_dump()
+    
+    # 2. Hand off to the Celery worker
+    task = trigger_tier3_scenario.delay(
+        payload=payload_dict, 
+        schema_name=request.schema_name
+    )
+    
+    # 3. Return immediately so the API stays highly responsive
+    return {
+        "message": f"Scenario '{request.site_name}' queued successfully.",
+        "task_id": task.id,
+        "schema_target": request.schema_name,
+        "sources_detected": len(request.sources)
     }

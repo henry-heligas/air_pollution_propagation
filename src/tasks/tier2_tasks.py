@@ -52,17 +52,19 @@ async def async_tier2_execution(site_name: str):
     )
     
     table_name = f"tier2_risk_model_{site_name}"
-    db_manager.persist_geodataframe(gdf_risk, table_name, schema="rails_north")
+    # FIX 1: Pass site_name as the schema instead of the hardcoded string
+    db_manager.persist_geodataframe(gdf_risk, table_name, schema=site_name)
     
     # 5. Instantiate Zero-Copy Views
     with db_manager.sync_engine.begin() as conn:
+        # FIX 2: Replace 'rails_north.' with '{site_name}.' in the view creation
         conn.execute(text(f"""
-            CREATE OR REPLACE VIEW rails_north.tier2_residential_{site_name} AS 
-            SELECT * FROM rails_north.{table_name} 
+            CREATE OR REPLACE VIEW {site_name}.tier2_residential_{site_name} AS 
+            SELECT * FROM {site_name}.{table_name} 
             WHERE exposure_category = 'residential';
 
-            CREATE OR REPLACE VIEW rails_north.tier2_non_residential_{site_name} AS 
-            SELECT * FROM rails_north.{table_name} 
+            CREATE OR REPLACE VIEW {site_name}.tier2_non_residential_{site_name} AS 
+            SELECT * FROM {site_name}.{table_name} 
             WHERE exposure_category != 'residential';
         """))
     

@@ -17,3 +17,18 @@ class ProposedFacilityRequest(BaseModel):
     )
     tier2_inner_m: float = Field(default=183.0)
     tier2_outer_m: float = Field(default=305.0)
+    
+class EmissionProfile(BaseModel):
+    # Using Dict to flexibly handle pollutant names like "PM2.5"
+    emissions_tpy: Dict[str, float]
+
+class PointSource(BaseModel):
+    source_id: str
+    latitude: float
+    longitude: float
+    emissions_tpy: Dict[str, float]
+
+class Tier3ScenarioPayload(BaseModel):
+    site_name: str
+    schema_name: str = "rails_north"  # Allow dynamic schema routing
+    sources: List[PointSource]

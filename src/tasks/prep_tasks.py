@@ -14,9 +14,9 @@ async def async_prep_vulnerability(site_name: str):
     create_sql = orchestrator.format_query("prep_vulnerability", {"site_name": site_name})
     
     # 2. Prepare the setup and teardown commands
-    drop_sql = f"DROP TABLE IF EXISTS rails_north.vulnerability_profile_{site_name} CASCADE;"
-    index_sql = f"CREATE INDEX IF NOT EXISTS idx_vuln_profile_{site_name}_geom ON rails_north.vulnerability_profile_{site_name} USING GIST (geometry);"
-    
+    drop_sql = f"DROP TABLE IF EXISTS {site_name}.vulnerability_profile_{site_name} CASCADE;"
+    index_sql = f"CREATE INDEX IF NOT EXISTS idx_vuln_profile_{site_name}_geom ON {site_name}.vulnerability_profile_{site_name} USING GIST (geometry);"
+        
     # 3. Execute transactionally via the DatabaseManager pool
     async with db_manager.async_engine.begin() as conn:
         await conn.execute(text(drop_sql))

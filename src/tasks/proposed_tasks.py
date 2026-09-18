@@ -1,8 +1,10 @@
 import asyncio
 import math
+import json
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from geopy.distance import geodesic
 from shapely.geometry import Point, Polygon
 
 from celery_app import celery_app
@@ -15,6 +17,61 @@ from src.io.orchestrator import orchestrator
 @celery_app.task(name="run_proposed_site_assessment")
 def run_proposed_site_assessment(payload: dict):
     return asyncio.run(async_proposed_site_execution(payload))
+
+async def async_run_tier3_multi_source(payload: dict, schema_name: str):
+    scenario_id = payload["site_name"]
+    sources = payload["sources"]
+    
+    flush_sql = f"DELETE FROM {schema_name}.tier3_environmental_impacts WHERE site_name = '{scenario_id}';"
+    await db_manager.execute(flush_sql)
+
+    # 2. Fetch baseline data
+    buildings_df = pd.DataFrame(await db_manager.execute_query(f"SELECT * FROM {schema_name}.tier2_buildings;"))
+    
+    # Initialize cumulative tracking columns
+    buildings_df['delta_hazard_index'] = 0.0
+    buildings_df['delta_cancer_risk'] = 0.0
+    buildings_df['nearest_source_m'] = 999999.0
+
+    # 3. Cumulative Multi-Source Decay Calculation
+    for source in sources:
+        src_lat = source["latitude"]
+        src_lon = source["longitude"]
+        
+        # Calculate distance in meters from this specific source to all buildings
+        distances = buildings_df.apply(
+            lambda row: geodesic((src_lat, src_lon), (row['latitude'], row['longitude'])).meters, 
+            axis=1
+        )
+        
+        # Track the absolute nearest source distance for the bivariate histogram
+        buildings_df['nearest_source_m'] = np.minimum(buildings_df['nearest_source_m'], distances)
+        
+        # Calculate standard 2D radial decay factor
+        decay_factor = 1 / ((distances / 100) ** 1.5)
+        
+        # Extract specific pollutants
+        pm25 = source["emissions_tpy"].get("PM2.5", 0.0)
+        benzene = source["emissions_tpy"].get("BENZENE", 0.0)
+        
+        # Cumulatively sum the intersecting plumes (Applying theoretical impact constants)
+        buildings_df['delta_hazard_index'] += decay_factor * (pm25 * 0.01)
+        buildings_df['delta_cancer_risk'] += decay_factor * (benzene * 0.05)
+
+    # 4. Finalize Proposed Values
+    buildings_df['proposed_hazard_index'] = buildings_df['baseline_hazard_index'] + buildings_df['delta_hazard_index']
+    buildings_df['site_name'] = scenario_id
+
+    # 5. Insert back into the unified table
+    await db_manager.insert_dataframe(f"{schema_name}.tier3_environmental_impacts", buildings_df)
+    print(f"[{scenario_id}] Successfully simulated {len(sources)} intersecting plumes.")
+    
+    return scenario_id
+
+@celery_app.task(name="trigger_tier3_scenario")
+def trigger_tier3_scenario(payload: dict, schema_name: str):
+    """Synchronous Celery wrapper for the async simulation solver."""
+    return asyncio.run(async_run_tier3_multi_source(payload, schema_name))
 
 async def async_proposed_site_execution(payload: dict):
     site_name = payload["site_name"]

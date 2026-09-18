@@ -29,6 +29,7 @@ name = "air-pollution-propagation"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "altair" },
     { name = "asyncpg" },
     { name = "celery", extra = ["redis"] },
@@ -38,6 +39,7 @@ dependencies = [
     { name = "folium" },
     { name = "geoalchemy2" },
     { name = "geopandas" },
+    { name = "geopy" },
     { name = "jupyterlab" },
     { name = "libpysal", version = "4.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "libpysal", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -66,6 +68,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.20.0" },
     { name = "altair", specifier = ">=5.2.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "celery", extras = ["redis"], specifier = ">=5.3.6" },
@@ -74,6 +77,7 @@ requires-dist = [
     { name = "folium", specifier = ">=0.20.0" },
     { name = "geoalchemy2", specifier = ">=0.14.4" },
     { name = "geopandas", specifier = ">=0.14.3" },
+    { name = "geopy", specifier = ">=2.5.0" },
     { name = "jupyterlab", specifier = ">=4.6.3" },
     { name = "libpysal", specifier = ">=4.14.1" },
     { name = "mapclassify", specifier = ">=2.10.0" },
@@ -93,6 +97,20 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.28" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.28.0" },
     { name = "xarray", specifier = ">=2024.2.0" },
+]
+
+[[package]]
+name = "alembic"
+version = "1.20.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/aa/02910bdb8e2f1444f6654d5b296cd827d126f82209050ee7b1000f92ac4b/alembic-1.20.0.tar.gz", hash = "sha256:db505480647bc60386c5369402f4a57a506b7539c9e9ef5e270d45cbbe4939bf", size = 2093272, upload-time = "2026-09-11T19:09:11.126Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/78a89b55b0904d222183164e079b4ca56208e94eff1d35ad1f1ad5be9b06/alembic-1.20.0-py3-none-any.whl", hash = "sha256:77eb101048d95f982c0353e9233404889dcd7a6fc244c107836c0e2fc9cf7d9d", size = 268719, upload-time = "2026-09-11T19:09:12.88Z" },
 ]
 
 [[package]]
@@ -825,6 +843,15 @@ wheels = [
 ]
 
 [[package]]
+name = "geographiclib"
+version = "2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/78/4892343230a9d29faa1364564e525307a37e54ad776ea62c12129dbba704/geographiclib-2.1.tar.gz", hash = "sha256:6a6545e6262d0ed3522e13c515713718797e37ed8c672c31ad7b249f372ef108", size = 37004, upload-time = "2025-08-21T21:34:26Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/b3/802576f2ea5dcb48501bb162e4c7b7b3ca5654a42b2c968ef98a797a4c79/geographiclib-2.1-py3-none-any.whl", hash = "sha256:e2a873b9b9e7fc38721ad73d5f4e6c9ed140d428a339970f505c07056997d40b", size = 40740, upload-time = "2025-08-21T21:34:24.955Z" },
+]
+
+[[package]]
 name = "geopandas"
 version = "1.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -841,6 +868,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/39/a9/0478b74a33aea66827c10baaf6025cb2a17e44b1c117533eecd3e977bb75/geopandas-1.1.4.tar.gz", hash = "sha256:06f2890a07e1a239047daa14b486a7c6ae5ce82dcf7405e13c46bf31f5d0dd66", size = 337445, upload-time = "2026-06-26T17:23:54.497Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/59/a8/bd530cc264e62ddbc1d1bb7225823992e6f2432c664693e9281bb6b9c359/geopandas-1.1.4-py3-none-any.whl", hash = "sha256:1a0c459cbdb1537cd154dafe6174be20d1760844b7f1c967dc8520b180f2e773", size = 343292, upload-time = "2026-06-26T17:23:53.112Z" },
+]
+
+[[package]]
+name = "geopy"
+version = "2.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "geographiclib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/da/0c/b4e42a0495293f6c94364baba4c657c68bc8d8efec784259cc943f4ba28b/geopy-2.5.0.tar.gz", hash = "sha256:7b6c849f18108dcce4faa3d614e2801107b465f7b05fd3c1db9db12e225ae950", size = 122254, upload-time = "2026-07-12T19:50:06.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/e5/de8b557b279e31cdfb2070ac83eb45dc7e29bd93cd544128756f658e52c7/geopy-2.5.0-py3-none-any.whl", hash = "sha256:8ad8cc226b505ca4d272ae9a2eeba08b8a2c565fc9a04eaefc33ad49c32b51aa", size = 114619, upload-time = "2026-07-12T19:50:04.839Z" },
 ]
 
 [[package]]
@@ -1397,6 +1436,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/54/94/7b7d286e65b66db8bcd0eb18accae8d68501b432cb7255fe9d264338cf22/libpysal-4.15.0.tar.gz", hash = "sha256:db9eee1579678a2eec6974c831dc93abf612a4df5a3c45e9d7ed35ea5f9e2497", size = 6776607, upload-time = "2026-07-03T14:44:42.538Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/45/ede6d644008022592ba97211a562eca7cce527a0adc061028716fa20d34f/libpysal-4.15.0-py3-none-any.whl", hash = "sha256:081b603c385dd237254b5698e524a0f072b1698db0ceca33c6dcecdbdbedeb6e", size = 2525426, upload-time = "2026-07-03T14:44:40.45Z" },
+]
+
+[[package]]
+name = "mako"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/12/b5fa2353e2754cd67fb9f83793fa48ff42c213a5da7e719869d2301f6ab8/mako-1.4.1.tar.gz", hash = "sha256:d7904710b662996425a21627710c4777c45053146942cf8a7aebf757c92b8c27", size = 410165, upload-time = "2026-08-05T06:10:56.611Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/54/12ed58d458474aaab5c3d180173e745a4fe131bb330370596876d19ff60f/mako-1.4.1-py3-none-any.whl", hash = "sha256:a359d9a94a541213958742b2698d0a7757bb83551767bc468a74b9905aba9617", size = 80010, upload-time = "2026-08-05T06:10:58.248Z" },
 ]
 
 [[package]]

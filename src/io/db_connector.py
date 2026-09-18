@@ -48,11 +48,25 @@ class DatabaseManager:
                 return [dict(row._mapping) for row in res.fetchall()]
             return []
 
-    def persist_geodataframe(self, gdf: gpd.GeoDataFrame, table_name: str, schema: str = "public", index_geom: bool = True, geom_col: str = "geometry"):
+    def persist_geodataframe(
+        self, 
+        gdf: gpd.GeoDataFrame, 
+        table_name: str, 
+        schema: str = "public", 
+        index_geom: bool = True, 
+        geom_col: str = "geometry"
+    ):
         """
-        Synchronously pushes a GeoDataFrame to PostGIS using the connection pool.
-        Automatically handles dropping old tables and creating spatial indexes.
+        Persists a GeoDataFrame with an explicit integer Primary Key ('fid') 
+        for QGIS/GIS client compatibility.
         """
+        # Ensure a clean integer 'fid' column exists at index 0
+        gdf = gdf.copy()
+        if "fid" in gdf.columns:
+            gdf.drop(columns=["fid"], inplace=True)
+            
+        gdf.insert(0, "fid", range(1, len(gdf) + 1))
+
         with self.sync_engine.begin() as conn:
             conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{table_name} CASCADE;"))
             
@@ -64,6 +78,10 @@ class DatabaseManager:
             index=False,
             chunksize=1000
         )
+        
+        # Mark 'fid' as the official PRIMARY KEY and index the geometry
+        with self.sync_engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {schema}.{table_name} ADD PRIMARY KEY (fid);"))
         
         if index_geom:
             self.create_spatial_index(schema, table_name, geom_col)

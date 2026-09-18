@@ -43,7 +43,7 @@ TEMPLATES = {
             COALESCE(c.pbl_height_m, 1000.0) AS pblh_meters,
             298.15 AS temperature_k,
             101325.0 AS pressure_pa
-        FROM {site_name}.air_quality_satellite_chicago_macro s
+        FROM public.air_quality_satellite_chicago_macro s
         LEFT JOIN public.planetary_boundary_layer_chicago_macro c
             ON ST_Intersects(ST_Centroid(s.geometry), c.geometry);
         """
@@ -76,7 +76,7 @@ TEMPLATES = {
         "description": "Prepares the residential and non-residential data for impact analysis in tier 2.",
         "schema": SiteSchema,
         "template": """
-        CREATE TABLE rails_north.vulnerability_profile_{site_name} AS
+        CREATE TABLE {site_name}.vulnerability_profile_{site_name} AS
             WITH hospital_buildings AS (
                 SELECT DISTINCT ON (b.id)
                     'hospital_3d_' || b.id AS building_id,
@@ -84,8 +84,8 @@ TEMPLATES = {
                     GREATEST(200, ((ST_Area(b.geometry::geography) * COALESCE(b.num_floors, GREATEST(1, ROUND(b.height / 3.5)), 1)) / 30)::int) AS population,
                     'hospital'::text AS exposure_category,
                     'acute_sensitive'::text AS exposure_type
-                FROM rails_north.overture_buildings_3d_{site_name} b
-                JOIN rails_north.overture_places_{site_name} p ON ST_Intersects(b.geometry, p.geometry)
+                FROM {site_name}.overture_buildings_3d_{site_name} b
+                JOIN {site_name}.overture_places_{site_name} p ON ST_Intersects(b.geometry, p.geometry)
                 WHERE p.primary_category = 'hospital'
             ),
             school_buildings AS (
@@ -95,8 +95,8 @@ TEMPLATES = {
                     COALESCE(GREATEST(150, ((ST_Area(b.geometry::geography) * COALESCE(b.num_floors, GREATEST(1, ROUND(b.height / 3.5)), 1)) / 25)::int), 300) AS population,
                     a.amenity AS exposure_category,
                     'acute_sensitive'::text AS exposure_type
-                FROM rails_north.amenities_{site_name} a
-                JOIN rails_north.overture_buildings_3d_{site_name} b ON ST_DWithin(a.geometry::geography, b.geometry::geography, 20)
+                FROM {site_name}.amenities_{site_name} a
+                JOIN {site_name}.overture_buildings_3d_{site_name} b ON ST_DWithin(a.geometry::geography, b.geometry::geography, 20)
                 WHERE a.amenity IN ('school', 'kindergarten', 'social_facility')
                 AND NOT EXISTS (
                     SELECT 1 FROM hospital_buildings h WHERE ST_Intersects(b.geometry, h.geometry)
@@ -109,7 +109,7 @@ TEMPLATES = {
                     r.est_population AS population,
                     'residential'::text AS exposure_category,
                     'chronic_24h'::text AS exposure_type
-                FROM rails_north.buildings_demographic_profile_{site_name} r
+                FROM {site_name}.buildings_demographic_profile_{site_name} r
                 WHERE NOT EXISTS (
                     SELECT 1 FROM hospital_buildings h WHERE ST_Intersects(r.geometry, h.geometry)
                 )
@@ -124,7 +124,7 @@ TEMPLATES = {
                     GREATEST(50, (ST_Area(l.geometry::geography) / 100)::int) AS population,
                     l.leisure AS exposure_category,
                     'transient_daytime'::text AS exposure_type
-                FROM rails_north.landuse_{site_name} l
+                FROM {site_name}.landuse_{site_name} l
                 WHERE l.leisure IN ('park', 'playground', 'pitch', 'stadium')
             )
             SELECT * FROM hospital_buildings
@@ -134,9 +134,9 @@ TEMPLATES = {
             SELECT * FROM residential_buildings
             UNION ALL
             SELECT * FROM open_spaces;
-            """
+        """
     },
-    
+
     "tier2_exposure": {
         "description": "Extracts ambient baseline data from vulnerability profiles.",
         "schema": SiteSchema,
@@ -149,7 +149,7 @@ TEMPLATES = {
             COALESCE(b.exposure_type, 'chronic_24h') AS exposure_type,
             1.0 AS decay_factor,
             ST_AsText(b.geometry) AS wkt_geometry
-        FROM rails_north.vulnerability_profile_{site_name} b;
+        FROM {site_name}.vulnerability_profile_{site_name} b;
         """
     },
 
@@ -159,7 +159,7 @@ TEMPLATES = {
         "template": """
         WITH building_buffers AS (
             SELECT b.building_id, b.geometry
-            FROM rails_north.vulnerability_profile_{site_name} b
+            FROM {site_name}.vulnerability_profile_{site_name} b
         ),
         industrial_load AS (
             SELECT 
@@ -168,7 +168,7 @@ TEMPLATES = {
                 COALESCE(SUM((p.pm25_g_per_sec * 31.536) / GREATEST(POWER(ST_Distance(bb.geometry::geography, p.geometry::geography) / 100.0, 2), 1.0)), 0) AS pm25_load_1km,
                 COALESCE(MIN(ST_Distance(bb.geometry::geography, p.geometry::geography)), 5000) AS dist_to_nearest_source_m
             FROM building_buffers bb
-            LEFT JOIN rails_north.epa_point_sources_{site_name} p
+            LEFT JOIN {site_name}.epa_point_sources_{site_name} p
                 ON ST_DWithin(bb.geometry::geography, p.geometry::geography, 3000)
             GROUP BY bb.building_id
         )
@@ -188,7 +188,7 @@ TEMPLATES = {
         "template": """
         WITH bldgs AS (
             SELECT building_id, ST_Centroid(geometry) AS geom 
-            FROM rails_north.vulnerability_profile_{site_name}
+            FROM {site_name}.vulnerability_profile_{site_name}
         )
         SELECT 
             b.building_id AS sector,
