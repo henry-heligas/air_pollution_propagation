@@ -1,0 +1,7 @@
+FoamFile { version 2.0; format ascii; class dictionary; object transportProperties; }
+transportModel  Newtonian;
+nu              [0 2 -1 0 0 0 0] 1.5e-05; // Kinematic viscosity of air
+beta            [0 0 0 -1 0 0 0] 3e-03;   // Thermal expansion coefficient
+TRef            [0 0 0 1 0 0 0] 293.15;   // Reference temperature
+Pr              [0 0 0 0 0 0 0] 0.7;      // Prandtl number
+Prt             [0 0 0 0 0 0 0] 0.85;     // Turbulent Prandtl number

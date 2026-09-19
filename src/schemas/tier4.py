@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict
+from typing import List, Dict, Literal, Optional
 
 class CFDWindConfig(BaseModel):
     wind_direction_deg: float = Field(default=270.0, ge=0.0, le=360.0, description="Meteorological wind direction (270 = West)")
@@ -26,8 +26,9 @@ class CFDSource(BaseModel):
     exit_temperature_k: float = Field(default=293.15, gt=0.0, description="Temperature of the plume in Kelvin.")
 
 class Tier4CFDPayload(BaseModel):
-    site_name: str = Field(..., description="The schema and run isolation namespace")
-    scenario_type: str = Field(default="acute_fire", description="Tag for output tables (e.g., 'acute_fire', 'derailment')")
-    mesh: CFDMeshConfig = CFDMeshConfig()
-    wind: CFDWindConfig = CFDWindConfig()
-    sources: List[CFDSource]
+    site_name: str
+    scenario_mode: Literal["acute", "chronic"] = "acute"  # <-- The new toggle
+    scenario_type: str = "acute_fire"
+    wind: dict
+    mesh: dict
+    sources: List[dict]

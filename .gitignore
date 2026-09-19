@@ -28,3 +28,27 @@ secrets.json
 *.njsproj
 *.sln
 *.swp
+
+# OpenFOAM Generated Runs & Mesh Outputs
+openfoam_runs/*
+!openfoam_runs/.gitkeep
+
+# OpenFOAM Solver & Mesh Artifacts
+**/polyMesh/
+**/postProcessing/
+**/processor*/
+**/dynamicCode/
+log.*
+*.log
+
+# PyVista / VTK / 3D Asset Exports
+*.vtk
+*.vtp
+*.gltf
+*.obj
+
+# Python, Virtual Envs & Local Data
+__pycache__/
+*.py[cod]
+.venv/
+data/climate/*.csv

@@ -12,6 +12,7 @@ celery_app = Celery(
         "src.tasks.tier2_tasks",
         "src.tasks.prep_tasks",
         "src.tasks.proposed_tasks",
-        "src.tasks.reporting_tasks"
+        "src.tasks.reporting_tasks",
+        "src.tasks.tier4_tasks"
     ]
 )

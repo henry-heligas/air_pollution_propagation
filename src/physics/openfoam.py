@@ -37,52 +37,35 @@ def build_openfoam_case(payload: dict, case_dir: str):
     _write_velocity_boundary(wind_config, case_dir)
 
 def _write_topo_set_dict(sources: list, anchor_lat: float, anchor_lon: float, case_dir: str):
-    """
-    Generates system/topoSetDict.
-    Creates a distinct geometric cylinder patch for every source in the JSON array.
-    """
+    """Generates system/topoSetDict."""
     actions = []
-    
     for idx, source in enumerate(sources):
-        # Dynamically calculate the local X/Y offset from the anchor point
         local_x, local_y = get_local_xy(
             target_lat=source["latitude"], 
             target_lon=source["longitude"], 
             center_lat=anchor_lat, 
             center_lon=anchor_lon
         )
+        radius = 10.0
+        height = source.get("source_height_m", 0.0) 
+        z_bottom, z_top = height, height + 10.0
         
-        radius = source.get("source_radius_m", 5.0)
-        height = source.get("source_height_m", 0.0) # E.g., 0 for pool fire, 15 for smokestack
-        
-        # We make the cylinder 2 meters tall starting from the source_height
-        z_bottom = height
-        z_top = height + 2.0
-        
-        action = f"""
+        actions.append(f"""
+    {{
+        name    sourceZone_{idx};
+        type    cellSet;
+        action  new;
+        source  cylinderToCell;
+        sourceInfo
         {{
-            name    sourceZone_{idx};
-            type    cellSet;
-            action  new;
-            source  cylinderToCell;
-            sourceInfo
-            {{
-                p1      ({local_x:.2f} {local_y:.2f} {z_bottom:.2f});
-                p2      ({local_x:.2f} {local_y:.2f} {z_top:.2f});
-                radius  {radius};
-            }}
-        }}"""
-        actions.append(action)
+            p1      ({local_x:.2f} {local_y:.2f} {z_bottom:.2f});
+            p2      ({local_x:.2f} {local_y:.2f} {z_top:.2f});
+            radius  {radius};
+        }}
+    }}""")
 
-    content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
-FoamFile
-{{
-    version     2.0;
-    format      ascii;
-    class       dictionary;
-    object      topoSetDict;
-}}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    # Using the bulletproof one-liner OpenFOAM header
+    content = f"""FoamFile {{ version 2.0; format ascii; class dictionary; object topoSetDict; }}
 
 actions
 (
@@ -93,136 +76,95 @@ actions
         f.write(content)
 
 def _write_temperature_boundary(sources: list, case_dir: str):
-    """Generates 0/T (Temperature)."""
-    boundary_patches = ""
-    for idx, source in enumerate(sources):
-        temp_k = source.get("exit_temperature_k", 293.15)
-        boundary_patches += f"""
-    sourceZone_{idx}
-    {{
-        type            fixedValue;
-        value           uniform {temp_k};
-    }}"""
-
-    content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
-FoamFile
-{{
-    version     2.0;
-    format      ascii;
-    class       volScalarField;
-    object      T;
-}}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
+    content = f"""FoamFile {{ version 2.0; format ascii; class volScalarField; object T; }}
 dimensions      [0 0 0 1 0 0 0];
 internalField   uniform 293.15;
-
 boundaryField
 {{
     inlet           {{ type inletOutlet; inletValue uniform 293.15; value $internalField; }}
     outlet          {{ type inletOutlet; inletValue uniform 293.15; value $internalField; }}
     ground          {{ type zeroGradient; }}
-    buildings       {{ type zeroGradient; }}
-    {boundary_patches}
+    sky             {{ type inletOutlet; inletValue uniform 293.15; value $internalField; }}
+    sides           {{ type zeroGradient; }}
 }}
 """
     with open(os.path.join(case_dir, "0", "T"), "w") as f:
         f.write(content)
 
 def _write_velocity_boundary(wind_config: dict, case_dir: str):
-    """
-    Generates 0/U (Velocity).
-    Translates meteorological wind direction and speed into a 3D vector.
-    """
+    import math
     wind_dir = wind_config.get("wind_direction_deg", 270.0)
     speed = wind_config.get("reference_velocity", 5.0)
+    angle_rad = math.radians(270.0 - wind_dir)
+    u_x, u_y = speed * math.cos(angle_rad), speed * math.sin(angle_rad)
     
-    # Convert meteorological direction (where wind is FROM) to math vector (where wind goes TO)
-    math_angle = 270.0 - wind_dir
-    angle_rad = math.radians(math_angle)
-    
-    u_x = speed * math.cos(angle_rad)
-    u_y = speed * math.sin(angle_rad)
-    u_z = 0.0 # Wind generally flows horizontally
-
-    content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
-FoamFile
-{{
-    version     2.0;
-    format      ascii;
-    class       volVectorField;
-    object      U;
-}}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-dimensions      [0 1 -1 0 0 0 0]; // Velocity (m/s)
-internalField   uniform ({u_x:.3f} {u_y:.3f} {u_z:.3f});
-
+    content = f"""FoamFile {{ version 2.0; format ascii; class volVectorField; object U; }}
+dimensions      [0 1 -1 0 0 0 0];
+internalField   uniform ({u_x:.3f} {u_y:.3f} 0.0);
 boundaryField
 {{
-    inlet           {{ type fixedValue; value uniform ({u_x:.3f} {u_y:.3f} {u_z:.3f}); }}
+    inlet           {{ type fixedValue; value uniform ({u_x:.3f} {u_y:.3f} 0.0); }}
     outlet          {{ type zeroGradient; }}
-    ground          {{ type noSlip; }} // Friction at the ground
-    buildings       {{ type noSlip; }} // Friction against buildings
-    
-    // We treat the fire zones themselves as pushing out gas at a mechanical velocity
-    """
-    
-    # Optionally, we could add specific exit velocities for each source here
-    content += """
-}
+    ground          {{ type noSlip; }}
+    sky             {{ type slip; }}
+    sides           {{ type slip; }}
+}}
 """
     with open(os.path.join(case_dir, "0", "U"), "w") as f:
         f.write(content)
 
+def _write_fv_options(sources: list, case_dir: str):
+    """Uses constant/fvModels (v2406+) to inject continuous heat into the T equation."""
+    actions = []
+    for idx, _ in enumerate(sources):
+        actions.append(f"""
+    heatSource_{idx}
+    {{
+        type            scalarSemiImplicitSource;
+        active          true;
+        selectionMode   cellSet;
+        cellSet         sourceZone_{idx};
+        volumeMode      specific;
+        // Injecting 500 Kelvin per second into this volume
+        injectionRateSuSp {{ T (500 0); }} 
+    }}""")
+        
+    content = f"""FoamFile {{ version 2.0; format ascii; class dictionary; object fvModels; }}
+{''.join(actions)}
+"""
+    # Note the change: v2406 expects this in the 'constant' directory, named 'fvModels'
+    with open(os.path.join(case_dir, "constant", "fvModels"), "w") as f:
+        f.write(content)
+
 def _write_block_mesh_dict(mesh_config: dict, case_dir: str):
-    """
-    Generates system/blockMeshDict.
-    Creates a dynamic bounding box based on the requested domain radius and cell size.
-    """
+    """Generates a perfectly formatted system/blockMeshDict."""
     radius = mesh_config.get("domain_radius_m", 500.0)
     z_max = mesh_config.get("domain_z_max", 200.0)
     cell_size = mesh_config.get("base_cell_size", 5.0)
     
-    # Calculate the bounding box coordinates (centered at 0,0)
     x_min, x_max = -radius, radius
     y_min, y_max = -radius, radius
     z_min = 0.0
     
-    # Calculate how many cells are needed to achieve the target resolution
-    # (Length / cell_size)
-    x_cells = int((x_max - x_min) / cell_size)
-    y_cells = int((y_max - y_min) / cell_size)
-    z_cells = int((z_max - z_min) / cell_size)
-    
-    # Ensure at least 1 cell in every direction to prevent engine crash
-    x_cells = max(1, x_cells)
-    y_cells = max(1, y_cells)
-    z_cells = max(1, z_cells)
+    x_cells = max(1, int((x_max - x_min) / cell_size))
+    y_cells = max(1, int((y_max - y_min) / cell_size))
+    z_cells = max(1, int((z_max - z_min) / cell_size))
 
-    content = f"""/*--------------------------------*- C++ -*----------------------------------*\\
-FoamFile
-{{
-    version     2.0;
-    format      ascii;
-    class       dictionary;
-    object      blockMeshDict;
-}}
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    # Using the bulletproof one-liner OpenFOAM header
+    content = f"""FoamFile {{ version 2.0; format ascii; class dictionary; object blockMeshDict; }}
 
 scale   1;
 
 vertices
 (
-    ({x_min} {y_min} {z_min}) // 0: Bottom-South-West
-    ({x_max} {y_min} {z_min}) // 1: Bottom-South-East
-    ({x_max} {y_max} {z_min}) // 2: Bottom-North-East
-    ({x_min} {y_max} {z_min}) // 3: Bottom-North-West
-    
-    ({x_min} {y_min} {z_max}) // 4: Top-South-West
-    ({x_max} {y_min} {z_max}) // 5: Top-South-East
-    ({x_max} {y_max} {z_max}) // 6: Top-North-East
-    ({x_min} {y_max} {z_max}) // 7: Top-North-West
+    ({x_min} {y_min} {z_min})
+    ({x_max} {y_min} {z_min})
+    ({x_max} {y_max} {z_min})
+    ({x_min} {y_max} {z_min})
+    ({x_min} {y_min} {z_max})
+    ({x_max} {y_min} {z_max})
+    ({x_max} {y_max} {z_max})
+    ({x_min} {y_max} {z_max})
 );
 
 blocks
@@ -239,43 +181,27 @@ boundary
     inlet
     {{
         type patch;
-        faces
-        (
-            (0 4 7 3) // West face (Assuming wind blows West to East for this simple test)
-        );
+        faces ( (0 4 7 3) );
     }}
     outlet
     {{
         type patch;
-        faces
-        (
-            (1 2 6 5) // East face
-        );
+        faces ( (1 2 6 5) );
     }}
     ground
     {{
         type wall;
-        faces
-        (
-            (0 1 2 3) // Bottom face
-        );
+        faces ( (0 1 2 3) );
     }}
     sky
     {{
         type patch;
-        faces
-        (
-            (4 5 6 7) // Top face
-        );
+        faces ( (4 5 6 7) );
     }}
     sides
     {{
         type patch;
-        faces
-        (
-            (0 1 5 4) // South face
-            (3 2 6 7) // North face
-        );
+        faces ( (0 1 5 4) (3 2 6 7) );
     }}
 );
 
@@ -285,3 +211,5 @@ mergePatchPairs
 """
     with open(os.path.join(case_dir, "system", "blockMeshDict"), "w") as f:
         f.write(content)
+
+
