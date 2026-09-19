@@ -1,9 +1,12 @@
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
+from config import settings
 from alembic import context
+from src.io.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -18,7 +21,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -26,9 +29,17 @@ target_metadata = None
 # ... etc.
 
 def include_object(object, name, type_, reflected, compare_to):
-    # Only manage tables that belong to our specific schema
-    if type_ == "table" and object.schema != "rails_north":
-        return False
+    """
+    Ignore tables that Alembic shouldn't touch.
+    """
+    if type_ == "table":
+        # Ignore standard PostGIS and Tiger geocoder tables
+        if name in ("spatial_ref_sys", "geometry_columns", "geography_columns", "topology"):
+            return False
+        # Ignore your dynamically generated pipeline tables
+        if name.startswith(("tier1_", "tier2_", "tier3_", "vulnerability_profile_", "climate_wind_", "epa_point_")):
+            return False
+            
     return True
 
 def run_migrations_offline() -> None:
@@ -43,12 +54,13 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object
     )
 
     with context.begin_transaction():
@@ -56,25 +68,24 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
+    """Run migrations in 'online' mode."""
+    # 1. Get the raw dictionary from the .ini file
+    configuration = config.get_section(config.config_ini_section)
+    
+    # 2. FORCE the URL override right here using your settings
+    configuration["sqlalchemy.url"] = settings.DATABASE_URL_SYNC
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
+    # 3. Now pass the corrected dictionary to the engine
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
         context.configure(
-    connection=connection,
-    target_metadata=target_metadata,
-    include_object=include_object,  # <-- Add this line
-    include_schemas=True
-)
+            connection=connection, target_metadata=target_metadata, include_object=include_object
+        )
 
         with context.begin_transaction():
             context.run_migrations()

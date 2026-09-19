@@ -288,7 +288,7 @@ TEMPLATES = {
             b.building_id AS sector,
             DEGREES(ST_Azimuth(s.geom, ST_Centroid(b.geometry))) AS azimuth_deg,
             1.0 / GREATEST(POWER(ST_Distance(b.geometry::geography, s.geom::geography)/100.0, 2), 1.0) AS decay_factor
-        FROM rails_north.vulnerability_profile_{site_name} b CROSS JOIN stack s;
+        FROM {site_name}.vulnerability_profile_{site_name} b CROSS JOIN stack s;
         """
     },
     
@@ -297,7 +297,7 @@ TEMPLATES = {
         "schema": PointSourceSchema,
         "template": """
         SELECT wind_direction_timeseries 
-        FROM rails_north.climate_wind_grid_{site_name}
+        FROM public.climate_wind_grid_chicago_macro
         ORDER BY ST_Distance(geometry, ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))
         LIMIT 1;
         """

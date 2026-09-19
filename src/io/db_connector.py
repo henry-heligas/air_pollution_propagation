@@ -96,9 +96,14 @@ class DatabaseManager:
         with self.sync_engine.begin() as conn:
             conn.execute(sql)
 
-# Expose the singleton globally
+# 1. Expose the Singleton Database Manager instance
+# Used for: Async queries (FastAPI), GeoPandas persistence (Tasks)
 db_manager = DatabaseManager()
 
-# Legacy wrappers for backward compatibility with existing task files
+# 2. Expose the Synchronous Engine specifically for Tier 4 ORM/Alembic
+# Used for: from src.io.db_connector import engine -> Session(engine)
+engine = db_manager.sync_engine # <-- ADD THIS ALIAS
 
+# Legacy wrappers for backward compatibility with existing task files
+# TODO: Refactor callsites to use db_manager.create_spatial_index explicitly
 create_spatial_index = db_manager.create_spatial_index

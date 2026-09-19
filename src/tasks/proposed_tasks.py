@@ -94,7 +94,7 @@ async def async_proposed_site_execution(payload: dict):
     df_wind = parse_wind_frequencies(wind_raw_json)
     
     # 2. Fetch Baseline
-    baseline_sql = f"SELECT * FROM rails_north.tier2_risk_model_{site_name};"
+    baseline_sql = f"SELECT * FROM {site_name}.tier2_risk_model_{site_name};"
     df_master = pd.DataFrame(await db_manager.execute_spatial_query(baseline_sql))
     df_master['sector'] = df_master['sector'].astype(str)
     
@@ -170,7 +170,7 @@ async def async_proposed_site_execution(payload: dict):
     )
     
     table_name = f"tier3_proposed_impact_{site_name}"
-    db_manager.persist_geodataframe(gdf_impact, table_name, schema="rails_north")
+    db_manager.persist_geodataframe(gdf_impact, table_name, schema=site_name)
     
     # ---------------------------------------------------------
     # Generate and Persist Wind Rose Geometric Layer for QGIS
@@ -209,6 +209,6 @@ async def async_proposed_site_execution(payload: dict):
     
     # Push the wind rose layer to PostgreSQL using DatabaseManager
     wind_table_name = f"tier3_wind_rose_{site_name}"
-    db_manager.persist_geodataframe(gdf_wedges, wind_table_name, schema="rails_north")
+    db_manager.persist_geodataframe(gdf_wedges, wind_table_name, schema=site_name)
 
     return {"status": "success", "site": site_name, "table": table_name}

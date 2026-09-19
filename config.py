@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     POSTGIS_USER: str = "postgres"
     POSTGIS_PASSWORD: str = "postgres"
 
+
+
     # Redis Broker Credentials
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -67,6 +69,11 @@ class Settings(BaseSettings):
         "SO2":     {"rfc": 75.0,  "type": "non-cancer"}, # 75 ppb acute
         "BENZENE": {"iur": 7.8e-6, "type": "cancer"}     # Lifetime risk per ug/m3
     }
+
+    @property
+    def DATABASE_URL_SYNC(self) -> str:
+        # Standard synchronous psycopg2 connection string
+        return f"postgresql://{self.POSTGIS_USER}:{self.POSTGIS_PASSWORD}@{self.POSTGIS_HOST}:{self.POSTGIS_PORT}/{self.POSTGIS_DB}"
 
     @property
     def async_database_url(self) -> str:

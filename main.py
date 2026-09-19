@@ -7,6 +7,8 @@ from src.tasks.tier1_tasks import run_tier1_baseline
 from src.tasks.prep_tasks import run_prep_vulnerability_profile  # NEW IMPORT
 from src.tasks.tier2_tasks import run_tier2_risk_model
 from src.tasks.proposed_tasks import run_proposed_site_assessment, trigger_tier3_scenario
+from src.schemas.tier4 import Tier4CFDPayload
+from src.tasks.tier4_tasks import run_tier4_cfd_disaster
 
 from src.schemas.impact import ProposedFacilityRequest
 from celery_app import celery_app
@@ -132,4 +134,31 @@ async def simulate_tier3_scenario(request: Tier3ScenarioPayload):
         "task_id": task.id,
         "schema_target": request.schema_name,
         "sources_detected": len(request.sources)
+    }
+
+@app.post("/api/v1/simulate/tier4-acute")
+async def simulate_tier4_acute(request: Tier4CFDPayload):
+    """
+    Ingests a disaster scenario, validates the 3D physics boundaries, 
+    and queues the OpenFOAM CFD generation in Celery.
+    """
+    # 1. Convert validated Pydantic models back to a flat dictionary for Celery
+    payload_dict = request.model_dump()
+    
+    # 2. Extract site_name to dictate the database schema routing
+    target_schema = request.site_name
+    
+    # 3. Fire-and-forget handoff to the Celery worker
+    task = run_tier4_cfd_disaster.delay(
+        payload=payload_dict, 
+        schema_name=target_schema
+    )
+    
+    # 4. Return the 202 Accepted response immediately
+    return {
+        "message": f"Tier 4 Acute Simulation '{request.scenario_type}' queued successfully.",
+        "task_id": task.id,
+        "schema_target": target_schema,
+        "sources_detected": len(request.sources),
+        "domain_radius": request.mesh.domain_radius_m
     }

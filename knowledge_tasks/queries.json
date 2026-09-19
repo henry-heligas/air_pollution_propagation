@@ -210,7 +210,7 @@
             "title": "PointSourceSchema",
             "type": "object"
         },
-        "template": "WITH stack AS (SELECT ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) AS geom)\nSELECT\nb.building_id AS sector,\nDEGREES(ST_Azimuth(s.geom, ST_Centroid(b.geometry))) AS azimuth_deg,\n1.0 / GREATEST(POWER(ST_Distance(b.geometry::geography, s.geom::geography)/100.0, 2), 1.0) AS decay_factor\nFROM rails_north.vulnerability_profile_{site_name} b CROSS JOIN stack s;"
+        "template": "WITH stack AS (SELECT ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326) AS geom)\nSELECT\nb.building_id AS sector,\nDEGREES(ST_Azimuth(s.geom, ST_Centroid(b.geometry))) AS azimuth_deg,\n1.0 / GREATEST(POWER(ST_Distance(b.geometry::geography, s.geom::geography)/100.0, 2), 1.0) AS decay_factor\nFROM {site_name}.vulnerability_profile_{site_name} b CROSS JOIN stack s;"
     },
     "tier3_wind_anchor": {
         "description": "Fetches the localized 16-point wind array nearest to the primary stack.",
@@ -247,6 +247,6 @@
             "title": "PointSourceSchema",
             "type": "object"
         },
-        "template": "SELECT wind_direction_timeseries\nFROM rails_north.climate_wind_grid_{site_name}\nORDER BY ST_Distance(geometry, ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))\nLIMIT 1;"
+        "template": "SELECT wind_direction_timeseries\nFROM public.climate_wind_grid_chicago_macro\nORDER BY ST_Distance(geometry, ST_SetSRID(ST_MakePoint({lon}, {lat}), 4326))\nLIMIT 1;"
     }
 }
